@@ -1,0 +1,5 @@
+numpy==1.25.2
+opencv-python==4.8.1.78
+picamera2==0.3.36
+gpiozero==2.0.1
+tflite-runtime==2.14.0

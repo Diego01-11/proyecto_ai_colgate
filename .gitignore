@@ -1,0 +1,33 @@
+# Entorno virtual
+venv/
+.venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Archivos generados por la app
+recording_*/
+frames_*/
+stop_detector
+*.log
+
+# Visual Studio / editor
+.vscode/
+.idea/
+.DS_Store
+
+# Binarios / datos temporales
+*.mp4
+*.avi
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.bmp
+
+# PDFs/exports temporales
+*.pdf

@@ -1,0 +1,14 @@
+#comando para crear el enviroment
+python3 -m venv venv
+
+
+#comando para activar el enviroment
+source venv/bin/activate
+
+
+
+python -m pip install --upgrade pip
+
+
+#importante aca estan las versiones especificas con las que funciona el codigo, sumo cuidado con las ediciones en este archivo
+pip install -r requirements.txt
