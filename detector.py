@@ -75,7 +75,7 @@ def _verify_printed_label(
         trim_y:bottle.shape[0] - trim_y,
         trim_x:bottle.shape[1] - trim_x
     ]
-    hsv = cv2.cvtColor(central_crop, cv2.COLOR_RGB2HSV)
+    hsv = cv2.cvtColor(central_crop, cv2.COLOR_BGR2HSV)
     purple_mask = (
         (hsv[:, :, 0] >= PURPLE_H_MIN)
         & (hsv[:, :, 0] <= PURPLE_H_MAX)
@@ -86,7 +86,7 @@ def _verify_printed_label(
     if purple_ratio < min_purple_ratio:
         return True, 0.0, 0.0, 0.0, purple_ratio
 
-    gray = cv2.cvtColor(central_crop, cv2.COLOR_RGB2GRAY)
+    gray = cv2.cvtColor(central_crop, cv2.COLOR_BGR2GRAY)
     normalized = cv2.resize(gray, (128, 128))
     grad_x = cv2.Sobel(normalized, cv2.CV_64F, 1, 0, ksize=3)
     grad_y = cv2.Sobel(normalized, cv2.CV_64F, 0, 1, ksize=3)
@@ -169,10 +169,10 @@ def camera_thread():
         sh_buf = np.ndarray((state.camH, state.camW, 3), dtype=np.uint8, buffer=cam_shMem.buf)
 
         while state.app_state != 'exit':
-            frame = picam2.capture_array()
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2RGBA)
+            model_frame = picam2.capture_array()
+            frame_bgr = cv2.cvtColor(model_frame, cv2.COLOR_RGB2BGR)
             if not state.in_queue.full():
-                state.in_queue.put((frame_bgr[:, :, :3], time.monotonic()))
+                state.in_queue.put((model_frame, frame_bgr, time.monotonic()))
     finally:
         with state.camera_control_lock:
             if state.active_camera is picam2:
@@ -256,8 +256,9 @@ def ml_thread():
             frameReady.clear()
             isLabeled = -1
             tStart = time.time()
-            frame, frame_timestamp = state.in_queue.get_nowait()
-            frame = frame.copy()
+            model_frame, frame_bgr, frame_timestamp = state.in_queue.get_nowait()
+            model_frame = model_frame.copy()
+            frame_bgr = frame_bgr.copy()
 
             while future_inspections and future_inspections[0][1] <= frame_timestamp:
                 active_inspections.append([*future_inspections.popleft(), False, 0])
@@ -272,7 +273,8 @@ def ml_thread():
                     future_inspections.append(inspection)
                     break
 
-            roiFrame = frame[state.roi_y:state.roi_y + state.roi_h, state.roi_x:state.roi_x + state.roi_w]
+            roiFrame = model_frame[state.roi_y:state.roi_y + state.roi_h, state.roi_x:state.roi_x + state.roi_w]
+            roiFrame_bgr = frame_bgr[state.roi_y:state.roi_y + state.roi_h, state.roi_x:state.roi_x + state.roi_w]
             frame_resized = cv2.resize(roiFrame, (width, height))
             input_data = np.expand_dims(frame_resized, axis=0)
 
@@ -313,7 +315,7 @@ def ml_thread():
                             vision_settings = dict(state.vision_settings)
                         if vision_settings["enable_label_edge_check"]:
                             passed, mean_gx, mean_gy, ratio, purple_ratio = _verify_printed_label(
-                                roiFrame,
+                                roiFrame_bgr,
                                 xmin,
                                 ymin,
                                 xmax,
@@ -429,7 +431,7 @@ def ml_thread():
                     state.out_img_queue.get_nowait()
                 except queue.Empty:
                     pass
-            state.out_img_queue.put(frame)
+            state.out_img_queue.put(frame_bgr)
 
             state.frameReady.set()
         except queue.Empty:
@@ -503,8 +505,6 @@ def display_loop():
                 processed_frame = state.out_img_queue.get_nowait()
             except queue.Empty:
                 continue
-            processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR)
-
             metadata = result[0][11] if len(result[0]) > 11 and isinstance(result[0][11], dict) else {}
             for detection in metadata.get("detections", []):
                 xmin, ymin, xmax, ymax = detection["box"]
