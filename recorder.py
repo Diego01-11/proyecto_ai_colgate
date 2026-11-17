@@ -74,11 +74,13 @@ def record_video(duration=30):
         picam.configure(config)
         with state.camera_control_lock:
             camera_settings = dict(state.camera_settings)
-            picam.set_controls({
-                "AeEnable": camera_settings["auto_exposure"],
-                "ExposureTime": camera_settings["exposure_time_us"],
-                "AnalogueGain": camera_settings["analogue_gain"],
-            })
+            controls = {"AeEnable": camera_settings["auto_exposure"]}
+            if not camera_settings["auto_exposure"]:
+                controls.update({
+                    "ExposureTime": camera_settings["exposure_time_us"],
+                    "AnalogueGain": camera_settings["analogue_gain"],
+                })
+            picam.set_controls(controls)
             state.active_camera = picam
         picam.start()
         camera_started = True

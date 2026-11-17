@@ -32,21 +32,28 @@ def set_camera_settings(auto_exposure=None, exposure_time_us=None, analogue_gain
         if exposure_time_us is not None:
             exposure_time_us = int(exposure_time_us)
             if not 100 <= exposure_time_us <= 30000:
-                raise ValueError("Exposición fuera del rango permitido (100–30000 µs)")
+                raise ValueError("Exposición fuera del rango permitido (100-30000 us)")
             updated_settings["exposure_time_us"] = exposure_time_us
         if analogue_gain is not None:
             analogue_gain = float(analogue_gain)
             if not 1.0 <= analogue_gain <= 16.0:
-                raise ValueError("Ganancia fuera del rango permitido (1–16)")
+                raise ValueError("Ganancia fuera del rango permitido (1-16)")
             updated_settings["analogue_gain"] = analogue_gain
 
-        if state.active_camera is not None:
-            state.active_camera.set_controls({
-                "AeEnable": updated_settings["auto_exposure"],
-                "ExposureTime": updated_settings["exposure_time_us"],
-                "AnalogueGain": updated_settings["analogue_gain"],
-            })
+        if exposure_time_us is not None or analogue_gain is not None:
+            updated_settings["auto_exposure"] = False
+
+        camera_active = state.active_camera is not None
+        if camera_active:
+            controls = {"AeEnable": updated_settings["auto_exposure"]}
+            if not updated_settings["auto_exposure"]:
+                controls.update({
+                    "ExposureTime": updated_settings["exposure_time_us"],
+                    "AnalogueGain": updated_settings["analogue_gain"],
+                })
+            state.active_camera.set_controls(controls)
         state.camera_settings.update(updated_settings)
+        return camera_active
 
 
 def _verify_printed_label(
@@ -155,11 +162,13 @@ def camera_thread():
         picam2.configure(config)
         with state.camera_control_lock:
             camera_settings = dict(state.camera_settings)
-            picam2.set_controls({
-                "AeEnable": camera_settings["auto_exposure"],
-                "ExposureTime": camera_settings["exposure_time_us"],
-                "AnalogueGain": camera_settings["analogue_gain"],
-            })
+            controls = {"AeEnable": camera_settings["auto_exposure"]}
+            if not camera_settings["auto_exposure"]:
+                controls.update({
+                    "ExposureTime": camera_settings["exposure_time_us"],
+                    "AnalogueGain": camera_settings["analogue_gain"],
+                })
+            picam2.set_controls(controls)
             state.active_camera = picam2
         picam2.start()
         camera_started = True

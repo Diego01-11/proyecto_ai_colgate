@@ -93,7 +93,7 @@ record_message = ""
 camera_control_lock = threading.RLock()
 active_camera = None
 camera_settings = {
-    "auto_exposure": False,
+    "auto_exposure": True,
     "exposure_time_us": 4000,
     "analogue_gain": 6.0,
 }

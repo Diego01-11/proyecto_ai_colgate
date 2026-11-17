@@ -57,6 +57,7 @@ def _load_vision_config():
             config = json.load(config_file)
         settings = config["vision"]
         camera = config.get("camera", {})
+        camera_control_version = int(config.get("camera_control_version", 0))
         loaded = {
             "enable_label_edge_check": bool(settings["enable_label_edge_check"]),
             "min_label_gx": float(settings["min_label_gx"]),
@@ -64,8 +65,9 @@ def _load_vision_config():
             "min_purple_ratio": float(settings["min_purple_ratio"]),
         }
         loaded_camera = {
-            "auto_exposure": camera.get(
-                "auto_exposure", state.camera_settings["auto_exposure"]
+            "auto_exposure": (
+                camera.get("auto_exposure", state.camera_settings["auto_exposure"])
+                if camera_control_version >= 2 else True
             ),
             "exposure_time_us": int(camera.get(
                 "exposure_time_us", state.camera_settings["exposure_time_us"]
@@ -259,10 +261,50 @@ def create_start_interface():
     camera_auto_var = tk.BooleanVar()
     with state.camera_control_lock:
         camera_auto_var.set(state.camera_settings["auto_exposure"])
+        camera_settings_snapshot = dict(state.camera_settings)
+    exposure_var = tk.DoubleVar(value=camera_settings_snapshot["exposure_time_us"])
+    gain_var = tk.DoubleVar(value=camera_settings_snapshot["analogue_gain"])
+    exposure_readout = tk.StringVar(value=f"{exposure_var.get():.0f} µs")
+    gain_readout = tk.StringVar(value=f"{gain_var.get():.1f}×")
+    config_feedback = tk.StringVar(
+        value=(
+            "Auto-exposición activada por defecto. Desactívala para comparar "
+            "exposición manual; los controles se aplican en vivo."
+        )
+    )
 
     def update_camera_setting(**settings):
         try:
-            detector.set_camera_settings(**settings)
+            manual_change = (
+                "exposure_time_us" in settings or "analogue_gain" in settings
+            )
+            if manual_change:
+                camera_auto_var.set(False)
+                settings["auto_exposure"] = False
+            applied_live = detector.set_camera_settings(**settings)
+            with state.camera_control_lock:
+                applied = dict(state.camera_settings)
+            exposure_readout.set(f"{applied['exposure_time_us']} µs")
+            gain_readout.set(f"{applied['analogue_gain']:.1f}×")
+            if not applied_live:
+                config_feedback.set(
+                    "Cámara aún no activa: ajuste guardado en memoria y se aplicará "
+                    "cuando inicie la cámara."
+                )
+            elif applied["auto_exposure"]:
+                config_feedback.set(
+                    "Auto-exposición enviada a la cámara; puede tardar un momento "
+                    "en ajustar la imagen. "
+                    "Guardar conserva el ajuste para el próximo inicio."
+                )
+            elif manual_change:
+                config_feedback.set(
+                    "Exposición manual aplicada en vivo; auto-exposición desactivada."
+                )
+            else:
+                config_feedback.set(
+                    "Auto-exposición desactivada; exposición manual aplicada en vivo."
+                )
         except (RuntimeError, ValueError, OSError) as error:
             config_feedback.set(f"No se pudo aplicar control de cámara: {error}")
 
@@ -273,11 +315,8 @@ def create_start_interface():
         command=lambda: update_camera_setting(auto_exposure=camera_auto_var.get()),
     ).pack(anchor="w", pady=(0, 12))
 
-    with state.camera_control_lock:
-        camera_settings_snapshot = dict(state.camera_settings)
-    exposure_var = tk.DoubleVar(value=camera_settings_snapshot["exposure_time_us"])
-    gain_var = tk.DoubleVar(value=camera_settings_snapshot["analogue_gain"])
     ttk.Label(cal_shell, text="Exposición manual (µs)").pack(anchor="w")
+    ttk.Label(cal_shell, textvariable=exposure_readout).pack(anchor="w")
     ttk.Scale(
         cal_shell,
         from_=100,
@@ -286,6 +325,7 @@ def create_start_interface():
         command=lambda value: update_camera_setting(exposure_time_us=value),
     ).pack(fill="x", pady=(3, 10))
     ttk.Label(cal_shell, text="Ganancia analógica").pack(anchor="w")
+    ttk.Label(cal_shell, textvariable=gain_readout).pack(anchor="w")
     ttk.Scale(
         cal_shell,
         from_=1,
@@ -327,7 +367,6 @@ def create_start_interface():
 
     vision_readout = tk.StringVar(value="Esperando inferencia...")
     ttk.Label(cal_shell, textvariable=vision_readout, wraplength=660).pack(anchor="w", pady=10)
-    config_feedback = tk.StringVar(value=config_status)
     ttk.Label(cal_shell, textvariable=config_feedback, wraplength=660).pack(anchor="w", pady=(0, 8))
 
     def save_config():
@@ -339,14 +378,21 @@ def create_start_interface():
         try:
             with open(config_path, "w", encoding="utf-8") as config_file:
                 json.dump(
-                    {"vision": saved_settings, "camera": saved_camera},
+                    {
+                        "vision": saved_settings,
+                        "camera": saved_camera,
+                        "camera_control_version": 2,
+                    },
                     config_file,
                     indent=2,
                 )
         except OSError as error:
             config_feedback.set(f"No se pudo guardar config.json: {error}")
         else:
-            config_feedback.set(f"Umbrales guardados en {config_path}")
+            config_feedback.set(
+                f"Umbrales y ajustes de cámara guardados en {config_path}. "
+                "Guardar no cambia la imagen; los controles se aplican al moverlos."
+            )
 
     ttk.Button(cal_shell, text="Guardar umbrales en config.json", command=save_config).pack(anchor="w", pady=(4, 8))
 
