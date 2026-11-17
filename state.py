@@ -4,6 +4,7 @@ import threading
 import numpy as np
 from multiprocessing import shared_memory, Event
 import atexit
+from collections import deque
 
 # Camera params
 camH = 480
@@ -17,7 +18,7 @@ line_pos = roi_h // 2
 # Queues for thread communication
 in_queue = queue.Queue(maxsize=1)
 out_queue = queue.Queue(maxsize=1)
-flag_queue = queue.Queue(maxsize=1)
+inspection_queue = queue.Queue()
 out_img_queue = queue.Queue(maxsize=1)
 
 # Shared memory for camera frames
@@ -53,11 +54,40 @@ bottleCounter_2 = 0
 # sentinel to avoid accidental immediate match at startup
 badBottle = -999
 pending_bad_count = 0
+pending_bad_lock = threading.Lock()
 relay_off_ts = 0.0
 last_bad_ml_ts = 0.0
+inspection_window_seconds = 0.65
+
+# Live vision calibration and display state
+vision_lock = threading.Lock()
+vision_settings = {
+    "enable_label_edge_check": True,
+    "min_label_gx": 22.0,
+    "min_label_gx_gy_ratio": 0.35,
+    "min_purple_ratio": 0.35,
+}
+vision_metrics = {
+    "invoke_ms": 0.0,
+    "window_inf_count": 0,
+    "mean_gx": 0.0,
+    "mean_gy": 0.0,
+    "ratio": 0.0,
+    "purple_ratio": 0.0,
+}
+vision_gallery = deque(maxlen=4)
+vision_gallery_version = 0
+capture_test_requested = False
+maintenance_minimize_requested = False
+maintenance_minimized = False
 
 # ML visual flag (timestamp of last bad detection)
 ml_bad_ts = 0.0
+
+# Recording UI progress
+record_stage = "idle"
+record_progress = 0.0
+record_message = ""
 
 # Detection helpers
 border = 150

@@ -19,6 +19,7 @@ def video_to_images(video_path, output_folder=None, fps_extract=4, segment_secon
         return output_folder
 
     video_fps = capture.get(cv2.CAP_PROP_FPS) or state.camFPS
+    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_interval = max(1, int(round(video_fps / fps_extract)))
     segment_frames = max(1, int(round(video_fps * segment_seconds)))
     current_part = 1
@@ -42,6 +43,9 @@ def video_to_images(video_path, output_folder=None, fps_extract=4, segment_secon
             cv2.imwrite(image_path, frame)
             saved += 1
         index += 1
+        if total_frames > 0:
+            state.record_progress = min(index / total_frames, 1.0)
+            state.record_message = f"Extrayendo fotogramas: {int(state.record_progress * 100)}%"
 
     capture.release()
     if delete_video:
@@ -54,7 +58,10 @@ def video_to_images(video_path, output_folder=None, fps_extract=4, segment_secon
     return output_folder
 
 
-def record_video(duration=60):
+def record_video(duration=30):
+    state.record_stage = "recording"
+    state.record_progress = 0.0
+    state.record_message = "Preparando grabación"
     state.status_message = f"Grabando video... {duration}s máximo"
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     base_folder = os.path.join(os.getcwd(), f'recording_{timestamp}')
@@ -76,18 +83,32 @@ def record_video(duration=60):
             frame = picam.capture_array()
             frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             writer.write(frame_bgr)
+            state.record_progress = min((time.time() - start_time) / duration, 1.0)
+            state.record_message = f"Grabando video: {int(state.record_progress * 100)}%"
             time.sleep(1 / state.camFPS)
 
         writer.release()
         picam.stop()
+        state.record_stage = "extracting"
+        state.record_progress = 0.0
+        state.record_message = "Extrayendo fotogramas..."
         state.status_message = f"Video guardado en {video_path}"
         extracted_folder = video_to_images(video_path, output_folder=os.path.join(base_folder, 'frames'), fps_extract=4, segment_seconds=10, delete_video=True)
         state.status_message = f"Extracción completa: {extracted_folder} (video eliminado)"
     except Exception as e:
         state.status_message = f"Error de grabación: {e}"
+        state.record_stage = "error"
+        state.record_message = state.status_message
         print(state.status_message)
     finally:
         if state.app_state != 'exit':
+            failed = state.record_stage == "error"
             state.app_state = 'idle'
             state.selected_mode = None
-            state.status_message = 'Grabación completada. Seleccione modo.'
+            if failed:
+                state.status_message = state.record_message
+            else:
+                state.status_message = 'Grabación completada. Seleccione modo.'
+                state.record_stage = "done"
+                state.record_progress = 1.0
+                state.record_message = state.status_message
