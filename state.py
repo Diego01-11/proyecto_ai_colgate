@@ -89,6 +89,15 @@ record_stage = "idle"
 record_progress = 0.0
 record_message = ""
 
+# Picamera2/libcamera controls
+camera_control_lock = threading.RLock()
+active_camera = None
+camera_settings = {
+    "auto_exposure": False,
+    "exposure_time_us": 4000,
+    "analogue_gain": 6.0,
+}
+
 # Detection helpers
 border = 150
 distanceTraveledThreshold = 30

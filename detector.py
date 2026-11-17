@@ -24,6 +24,31 @@ DEBUG_VISION_METRICS = True
 pinRelay = LED(22)
 
 
+def set_camera_settings(auto_exposure=None, exposure_time_us=None, analogue_gain=None):
+    with state.camera_control_lock:
+        updated_settings = dict(state.camera_settings)
+        if auto_exposure is not None:
+            updated_settings["auto_exposure"] = bool(auto_exposure)
+        if exposure_time_us is not None:
+            exposure_time_us = int(exposure_time_us)
+            if not 100 <= exposure_time_us <= 30000:
+                raise ValueError("Exposición fuera del rango permitido (100–30000 µs)")
+            updated_settings["exposure_time_us"] = exposure_time_us
+        if analogue_gain is not None:
+            analogue_gain = float(analogue_gain)
+            if not 1.0 <= analogue_gain <= 16.0:
+                raise ValueError("Ganancia fuera del rango permitido (1–16)")
+            updated_settings["analogue_gain"] = analogue_gain
+
+        if state.active_camera is not None:
+            state.active_camera.set_controls({
+                "AeEnable": updated_settings["auto_exposure"],
+                "ExposureTime": updated_settings["exposure_time_us"],
+                "AnalogueGain": updated_settings["analogue_gain"],
+            })
+        state.camera_settings.update(updated_settings)
+
+
 def _verify_printed_label(
     frame,
     xmin,
@@ -124,23 +149,37 @@ def trackBottle(items):
 
 def camera_thread():
     picam2 = Picamera2()
-    config = picam2.create_preview_configuration(main={"format": "RGB888", "size": (state.camW, state.camH)}, controls={'FrameRate': state.camFPS})
-    picam2.configure(config)
-    picam2.set_controls({"AeEnable": False, "ExposureTime": 4000})
-    picam2.set_controls({"AnalogueGain": 6.0})
-    picam2.start()
-    time.sleep(2)
+    camera_started = False
+    try:
+        config = picam2.create_preview_configuration(main={"format": "RGB888", "size": (state.camW, state.camH)}, controls={'FrameRate': state.camFPS})
+        picam2.configure(config)
+        with state.camera_control_lock:
+            camera_settings = dict(state.camera_settings)
+            picam2.set_controls({
+                "AeEnable": camera_settings["auto_exposure"],
+                "ExposureTime": camera_settings["exposure_time_us"],
+                "AnalogueGain": camera_settings["analogue_gain"],
+            })
+            state.active_camera = picam2
+        picam2.start()
+        camera_started = True
+        time.sleep(2)
 
-    cam_shMem = state.shared_memory.SharedMemory(name=state.shName)
-    sh_buf = np.ndarray((state.camH, state.camW, 3), dtype=np.uint8, buffer=cam_shMem.buf)
+        cam_shMem = state.shared_memory.SharedMemory(name=state.shName)
+        sh_buf = np.ndarray((state.camH, state.camW, 3), dtype=np.uint8, buffer=cam_shMem.buf)
 
-    while state.app_state != 'exit':
-        frame = picam2.capture_array()
-        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2RGBA)
-        if not state.in_queue.full():
-            state.in_queue.put((frame_bgr[:, :, :3], time.monotonic()))
-    picam2.stop()
-    picam2.close()
+        while state.app_state != 'exit':
+            frame = picam2.capture_array()
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2RGBA)
+            if not state.in_queue.full():
+                state.in_queue.put((frame_bgr[:, :, :3], time.monotonic()))
+    finally:
+        with state.camera_control_lock:
+            if state.active_camera is picam2:
+                state.active_camera = None
+            if camera_started:
+                picam2.stop()
+            picam2.close()
 
 
 def ml_thread():

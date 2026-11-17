@@ -72,7 +72,16 @@ def record_video(duration=30):
         picam = Picamera2()
         config = picam.create_preview_configuration(main={"format": "RGB888", "size": (state.camW, state.camH)}, controls={'FrameRate': state.camFPS})
         picam.configure(config)
+        with state.camera_control_lock:
+            camera_settings = dict(state.camera_settings)
+            picam.set_controls({
+                "AeEnable": camera_settings["auto_exposure"],
+                "ExposureTime": camera_settings["exposure_time_us"],
+                "AnalogueGain": camera_settings["analogue_gain"],
+            })
+            state.active_camera = picam
         picam.start()
+        camera_started = True
         time.sleep(1)
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -89,6 +98,9 @@ def record_video(duration=30):
 
         writer.release()
         picam.stop()
+        camera_started = False
+        with state.camera_control_lock:
+            state.active_camera = None
         state.record_stage = "extracting"
         state.record_progress = 0.0
         state.record_message = "Extrayendo fotogramas..."
@@ -101,6 +113,13 @@ def record_video(duration=30):
         state.record_message = state.status_message
         print(state.status_message)
     finally:
+        if "picam" in locals():
+            with state.camera_control_lock:
+                if state.active_camera is picam:
+                    state.active_camera = None
+                if locals().get("camera_started", False):
+                    picam.stop()
+                picam.close()
         if state.app_state != 'exit':
             failed = state.record_stage == "error"
             state.app_state = 'idle'

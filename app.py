@@ -56,18 +56,36 @@ def _load_vision_config():
         with open(config_path, "r", encoding="utf-8") as config_file:
             config = json.load(config_file)
         settings = config["vision"]
+        camera = config.get("camera", {})
         loaded = {
             "enable_label_edge_check": bool(settings["enable_label_edge_check"]),
             "min_label_gx": float(settings["min_label_gx"]),
             "min_label_gx_gy_ratio": float(settings["min_label_gx_gy_ratio"]),
             "min_purple_ratio": float(settings["min_purple_ratio"]),
         }
+        loaded_camera = {
+            "auto_exposure": camera.get(
+                "auto_exposure", state.camera_settings["auto_exposure"]
+            ),
+            "exposure_time_us": int(camera.get(
+                "exposure_time_us", state.camera_settings["exposure_time_us"]
+            )),
+            "analogue_gain": float(camera.get(
+                "analogue_gain", state.camera_settings["analogue_gain"]
+            )),
+        }
+        if not isinstance(loaded_camera["auto_exposure"], bool):
+            raise ValueError("camera.auto_exposure debe ser booleano")
         if not (0 <= loaded["min_label_gx"] <= 100):
             raise ValueError("MIN_LABEL_GX fuera del rango 0–100")
         if not (0 <= loaded["min_label_gx_gy_ratio"] <= 2):
             raise ValueError("MIN_LABEL_GX_GY_RATIO fuera del rango 0–2")
         if not (0 <= loaded["min_purple_ratio"] <= 1):
             raise ValueError("MIN_PURPLE_RATIO fuera del rango 0–1")
+        if not (100 <= loaded_camera["exposure_time_us"] <= 30000):
+            raise ValueError("camera.exposure_time_us fuera del rango 100–30000 µs")
+        if not (1.0 <= loaded_camera["analogue_gain"] <= 16.0):
+            raise ValueError("camera.analogue_gain fuera del rango 1–16")
     except FileNotFoundError:
         return "Usando umbrales iniciales; config.json aún no existe."
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
@@ -75,7 +93,9 @@ def _load_vision_config():
 
     with state.vision_lock:
         state.vision_settings.update(loaded)
-    return "Umbrales cargados desde config.json."
+    with state.camera_control_lock:
+        state.camera_settings.update(loaded_camera)
+    return "Umbrales y cámara cargados desde config.json."
 
 
 def select_mode(mode):
@@ -236,6 +256,44 @@ def create_start_interface():
         command=lambda: update_setting("enable_label_edge_check", edge_check_var.get()),
     ).pack(anchor="w", pady=(0, 16))
 
+    camera_auto_var = tk.BooleanVar()
+    with state.camera_control_lock:
+        camera_auto_var.set(state.camera_settings["auto_exposure"])
+
+    def update_camera_setting(**settings):
+        try:
+            detector.set_camera_settings(**settings)
+        except (RuntimeError, ValueError, OSError) as error:
+            config_feedback.set(f"No se pudo aplicar control de cámara: {error}")
+
+    ttk.Checkbutton(
+        cal_shell,
+        text="Auto-exposición",
+        variable=camera_auto_var,
+        command=lambda: update_camera_setting(auto_exposure=camera_auto_var.get()),
+    ).pack(anchor="w", pady=(0, 12))
+
+    with state.camera_control_lock:
+        camera_settings_snapshot = dict(state.camera_settings)
+    exposure_var = tk.DoubleVar(value=camera_settings_snapshot["exposure_time_us"])
+    gain_var = tk.DoubleVar(value=camera_settings_snapshot["analogue_gain"])
+    ttk.Label(cal_shell, text="Exposición manual (µs)").pack(anchor="w")
+    ttk.Scale(
+        cal_shell,
+        from_=100,
+        to=30000,
+        variable=exposure_var,
+        command=lambda value: update_camera_setting(exposure_time_us=value),
+    ).pack(fill="x", pady=(3, 10))
+    ttk.Label(cal_shell, text="Ganancia analógica").pack(anchor="w")
+    ttk.Scale(
+        cal_shell,
+        from_=1,
+        to=16,
+        variable=gain_var,
+        command=lambda value: update_camera_setting(analogue_gain=value),
+    ).pack(fill="x", pady=(3, 12))
+
     metric_vars = {
         "min_label_gx": tk.DoubleVar(),
         "min_label_gx_gy_ratio": tk.DoubleVar(),
@@ -275,10 +333,16 @@ def create_start_interface():
     def save_config():
         with state.vision_lock:
             saved_settings = dict(state.vision_settings)
+        with state.camera_control_lock:
+            saved_camera = dict(state.camera_settings)
         config_path = os.path.join(os.getcwd(), "config.json")
         try:
             with open(config_path, "w", encoding="utf-8") as config_file:
-                json.dump({"vision": saved_settings}, config_file, indent=2)
+                json.dump(
+                    {"vision": saved_settings, "camera": saved_camera},
+                    config_file,
+                    indent=2,
+                )
         except OSError as error:
             config_feedback.set(f"No se pudo guardar config.json: {error}")
         else:
